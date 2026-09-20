@@ -32,15 +32,12 @@ from http.server import BaseHTTPRequestHandler
 
 # AI Studio(aistudio.google.com)에서 지금 쓸 수 있는 모델 이름으로 맞춘다.
 # 모델 이름과 무료 한도는 자주 바뀐다 — 교안의 이름을 그대로 믿지 말 것.
-MODEL = "gemini-2.5-flash"
+# models.list 로 이 키에서 generateContent 를 실제로 지원하는지 확인했고,
+# "Reply only with OK" 테스트 호출도 성공한 값이다.
+MODEL = "gemini-3.5-flash-lite"
 ENDPOINT = ("https://generativelanguage.googleapis.com/v1beta/"
             "models/{model}:generateContent")
 TIMEOUT = 6
-
-# ?probe=test 로 실제 generateContent 성공 여부를 확인할 후보 —
-# models.list 로 이 키에서 존재/generateContent 지원을 이미 확인한 것만 둔다.
-# 임시 진단용, 원인 확인 후 지운다.
-PROBE_CANDIDATES = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
 
 # topics.json 에 이미 공개된 제목/등급 이름 — 정답/원본 데이터 아님.
 TOPIC_NAMES = {
@@ -181,65 +178,4 @@ class handler(BaseHTTPRequestHandler):
             self._send({"comment": None})
 
     def do_GET(self):
-        # ?probe=models / ?probe=test&model=... 는 실제 사용 가능한 모델을
-        # 확인하기 위한 임시 조회용이다. 원인 확인 후 지운다.
-        # 키 값은 절대 응답에 담지 않는다 — 모델 이름/성공 여부만 돌려준다.
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        probe = (qs.get("probe") or [""])[0]
-        key = os.environ.get("GEMINI_API_KEY")
-
-        if probe == "models":
-            if not key:
-                self._send({"ok": False, "probe_error": "no_key"})
-                return
-            try:
-                req = urllib.request.Request(
-                    "https://generativelanguage.googleapis.com/v1beta/models",
-                    headers={"x-goog-api-key": key})
-                with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                    data = json.loads(r.read().decode("utf-8"))
-                models = [
-                    {"name": m.get("name"),
-                     "methods": m.get("supportedGenerationMethods", [])}
-                    for m in data.get("models", [])
-                    if "generateContent" in m.get("supportedGenerationMethods", [])
-                ]
-                self._send({"ok": True, "models": models})
-            except urllib.error.HTTPError as e:
-                self._send({"ok": False, "probe_error": f"http_{e.code}"})
-            except Exception as e:
-                self._send({"ok": False, "probe_error": type(e).__name__})
-            return
-
-        if probe == "test":
-            if not key:
-                self._send({"ok": False, "probe_error": "no_key"})
-                return
-            # 쿼리로 임의 모델명을 받지 않는다 — models.list 로 실제 존재를
-            # 확인한 후보만 코드에 고정해 시험한다.
-            results = []
-            for model in PROBE_CANDIDATES:
-                try:
-                    body = {"contents": [{"parts": [{"text": "Reply only with OK"}]}]}
-                    req = urllib.request.Request(
-                        ENDPOINT.format(model=model),
-                        data=json.dumps(body).encode("utf-8"),
-                        headers={"Content-Type": "application/json",
-                                 "x-goog-api-key": key},
-                        method="POST")
-                    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                        out = json.loads(r.read().decode("utf-8"))
-                    text = out["candidates"][0]["content"]["parts"][0]["text"]
-                    results.append({"model": model, "ok": True,
-                                    "sample": text[:50]})
-                except urllib.error.HTTPError as e:
-                    results.append({"model": model, "ok": False,
-                                    "probe_error": f"http_{e.code}"})
-                except Exception as e:
-                    results.append({"model": model, "ok": False,
-                                    "probe_error": type(e).__name__})
-            self._send({"ok": True, "results": results})
-            return
-
-        self._send({"ok": True, "key": bool(key)})
+        self._send({"ok": True, "key": bool(os.environ.get("GEMINI_API_KEY"))})
