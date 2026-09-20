@@ -64,6 +64,11 @@ function directionOf(q, mine) {
   if (Math.abs(d) <= 0.08) return "비슷";
   return d > 0 ? "높게" : "낮게";
 }
+/* AI 요청 payload 전용 — 화면 표시(directionOf)는 그대로 두고
+   서버로 보낼 때만 ASCII로 옮긴다. 한글 body 가 Vercel 의 Python
+   런타임에서 깨지는 문제를 payload 단계에서 피하기 위함이다. */
+const DIRECTION_EN = { "맞힘": "correct", "틀림": "wrong",
+                       "높게": "high", "낮게": "low", "비슷": "same" };
 
 function show(name) {
   Object.entries(views).forEach(([k, el]) => (el.hidden = k !== name));
@@ -237,7 +242,7 @@ function renderResult() {
     `출처 <a href="${PACK.source_url}" target="_blank" rel="noopener">${PACK.source}</a>`;
 
   requestAnimationFrame(() => setTimeout(animate, 60));
-  askComment(total, g.name);
+  askComment(total, g.min);
 }
 
 function choiceBody(q, mine) {
@@ -285,13 +290,17 @@ async function askComment(total, grade) {
   el.hidden = false;
   el.innerHTML = `<span class="tag">촌평을 받아오는 중…</span>`;
   const directions = PACK.questions.map((q, i) => directionOf(q, answers[i]));
+  const asciiDirections = directions.map((d) => DIRECTION_EN[d] || d);
   try {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 3000);
     const r = await fetch("/api/comment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ score: total, grade, directions, topic: PACK.title }),
+      // 한글 없이 ASCII 값만 보낸다 — topic id / 등급 컷오프(숫자) / 영어 방향
+      body: JSON.stringify({
+        score: total, grade, directions: asciiDirections, topic: PACK.id,
+      }),
       signal: ctl.signal,
     });
     clearTimeout(timer);

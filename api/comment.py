@@ -4,12 +4,20 @@
 이 앱에서 서버가 필요한 유일한 자리다. **키를 숨기기 위해서** 존재한다.
 키를 app.js 에 적으면 브라우저에서 그대로 보인다.
 
-  받는 것   {"score": 62, "grade": "수습 딱지 뗌",
-             "directions": ["맞힘", "높게", "틀림", "높게", "틀림"]}
+  받는 것   {"score": 62, "grade": 70,
+             "directions": ["correct", "high", "wrong", "high", "wrong"],
+             "topic": "cities"}
   주는 것   {"comment": "...", "nickname": "..."}
 
 **숫자를 보내지 않는다.** 방향만 보낸다 — 숫자를 주면 그 숫자로 새 숫자를
 만들어낸다. 점수·등급·오차는 전부 브라우저가 이미 계산했다.
+
+**body 는 ASCII 만 담는다.** grade 는 등급 컷오프 숫자, topic 은 topic id,
+directions 는 영어 코드다 — 한글이 섞이면 Vercel 의 Python 런타임에서
+body 를 읽는 단계 자체가 UnicodeDecodeError 로 깨지는 문제가 있었다.
+한국어 문맥은 아래 TOPIC_NAMES/GRADE_NAMES/DIRECTION_KO 로 이 파일
+안에서만 복원한다 — 전부 topics.json/화면에 이미 공개된 제목·등급 이름일
+뿐, 정답이나 원본 데이터가 아니다.
 
 키가 없거나 호출이 실패하면 {"comment": null} 을 200 으로 돌려준다.
 **앱은 촌평 없이도 그대로 돈다.**
@@ -28,6 +36,24 @@ MODEL = "gemini-2.5-flash"
 ENDPOINT = ("https://generativelanguage.googleapis.com/v1beta/"
             "models/{model}:generateContent")
 TIMEOUT = 6
+
+# topics.json 에 이미 공개된 제목/등급 이름 — 정답/원본 데이터 아님.
+TOPIC_NAMES = {
+    "seoul-heat": "서울은 얼마나 더워졌나",
+    "seoul-rain": "비는 언제, 얼마나",
+    "seoul-air": "미세먼지, 언제 나쁜가",
+    "working-hours": "우리는 얼마나 일하나",
+    "population": "인구와 출산",
+    "internet": "인터넷과 연결",
+    "usdkrw": "원달러 환율 26년",
+    "cities": "서울·도쿄·런던·싱가포르",
+    "quakes": "지진은 얼마나 자주",
+    "life": "얼마나 오래 사나",
+}
+GRADE_NAMES = {90: "촉이 데이터급", 70: "감이 좋은 편", 50: "보통의 감각",
+               30: "느낌대로 삽니다", 0: "감은 접어두시죠"}
+DIRECTION_KO = {"correct": "맞힘", "wrong": "틀림", "high": "높게",
+                "low": "낮게", "same": "비슷"}
 
 PROMPT = """너는 직장 데이터 퀴즈 앱의 촌평 담당이다.
 
@@ -50,26 +76,28 @@ PROMPT = """너는 직장 데이터 퀴즈 앱의 촌평 담당이다.
 {{"comment": "두 문장", "nickname": "별명"}}"""
 
 
-def _ask(score, grade, directions, topic=""):
-    """(comment, nickname, code) 를 돌려준다.
+def _ask(score, grade_min, directions, topic_id=""):
+    """(comment, nickname, code) 를 돌려준다. code 는 "ok" 아니면 실패 종류
+    (키 값·Gemini 응답 원문은 절대 담지 않는다 — print() 로만, 최소한으로,
+    Vercel Function Logs 에만 남긴다).
 
-    code 는 "ok" 아니면 아래 중 하나 — 원인 확인용 임시 진단 코드다.
-    상태코드 숫자 말고는 아무것도 담지 않는다: 키 값도, Gemini 응답 원문도,
-    prompt 도 나가지 않는다. 원인이 확인되면 이 코드는 지운다.
-      no_key / http_<상태코드> / timeout / url_error /
-      response_parse_error / empty_response / comment_parse_error /
-      unknown_error
+    입력은 전부 ASCII(등급 컷오프 숫자 / topic id / 영어 방향 코드)로 받고,
+    Gemini 프롬프트에 쓸 한국어 문맥은 여기서 TOPIC_NAMES/GRADE_NAMES/
+    DIRECTION_KO 로 복원한다.
     """
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         return None, None, "no_key"
 
+    topic = TOPIC_NAMES.get(topic_id, "이번")
+    grade = GRADE_NAMES.get(grade_min, "")
+    directions_ko = [DIRECTION_KO.get(d, d) for d in directions]
+
     body = {
         "contents": [{
             "parts": [{
-                "text": PROMPT.format(topic=topic or "이번", score=score,
-                                      grade=grade,
-                                      directions=", ".join(directions))
+                "text": PROMPT.format(topic=topic, score=score, grade=grade,
+                                      directions=", ".join(directions_ko))
             }]
         }],
         "generationConfig": {
@@ -84,42 +112,26 @@ def _ask(score, grade, directions, topic=""):
         headers={"Content-Type": "application/json", "x-goog-api-key": key},
         method="POST")
 
-    # 실패 지점을 구분한다 — 키 값과 에러 본문은 print() 로만 남기고
-    # (Vercel Function Logs 전용) 응답에는 상태코드 수준의 code 만 태운다.
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             raw = r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
-        body_snip = e.read().decode("utf-8", "ignore")[:300]
-        print(f"[comment] Gemini HTTPError {e.code}: {body_snip}")
+        print(f"[comment] Gemini HTTPError {e.code}")
         return None, None, f"http_{e.code}"
-    except TimeoutError as e:
-        print(f"[comment] Gemini 타임아웃: {e}")
-        return None, None, "timeout"
     except urllib.error.URLError as e:
-        print(f"[comment] Gemini URLError: {e}")
+        print(f"[comment] Gemini URLError: {type(e).__name__}")
         return None, None, "url_error"
     except Exception as e:
-        print(f"[comment] Gemini 호출 실패: {type(e).__name__}: {e}")
+        print(f"[comment] Gemini 호출 실패: {type(e).__name__}")
         return None, None, "unknown_error"
 
     try:
         out = json.loads(raw)
-    except Exception as e:
-        print(f"[comment] Gemini 응답 JSON 파싱 실패: {type(e).__name__}: {e}")
-        return None, None, "response_parse_error"
-
-    try:
         text = out["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        print(f"[comment] Gemini 응답에 candidates/text 없음: {type(e).__name__}: {e}")
-        return None, None, "empty_response"
-
-    try:
         got = json.loads(text)
     except Exception as e:
-        print(f"[comment] comment JSON 파싱 실패: {type(e).__name__}: {e}")
-        return None, None, "comment_parse_error"
+        print(f"[comment] Gemini 응답 처리 실패: {type(e).__name__}")
+        return None, None, "response_parse_error"
 
     comment = str(got.get("comment", ""))[:300]
     nickname = str(got.get("nickname", ""))[:20]
@@ -136,69 +148,32 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_POST(self):
-        # 1) 요청 파싱 단계 — post_parse_error 를 A~E 로 한 단계 더 쪼갠다.
-        # body 내용/str(e)/키/헤더 전체는 절대 응답에 담지 않는다.
-
-        # A. Content-Length 읽기/정수 변환
+        # app.js 는 ASCII payload 만 보낸다 — score(숫자), grade(등급 컷오프
+        # 숫자), directions(영어 코드 배열), topic(topic id). 무엇이 실패하든
+        # 앱을 멈추지 않는다: 사유는 print() 로만 남기고 {"comment": null}.
         try:
             n = int(self.headers.get("Content-Length") or 0)
-        except Exception as e:
-            self._send({"comment": None, "debug": "content_length_error",
-                        "error_type": type(e).__name__})
-            return
-
-        # B. body 읽기
-        try:
-            raw_body = self.rfile.read(n)
-        except Exception as e:
-            self._send({"comment": None, "debug": "body_read_error",
-                        "error_type": type(e).__name__,
-                        "content_length": n})
-            return
-        body_bytes = len(raw_body)
-
-        # C. JSON 파싱
-        try:
-            req = json.loads(raw_body or b"{}")
-        except Exception as e:
-            self._send({"comment": None, "debug": "json_decode_error",
-                        "error_type": type(e).__name__,
-                        "content_length": n, "body_bytes": body_bytes})
-            return
-
-        # D. score 캐스팅
-        try:
+            req = json.loads(self.rfile.read(n) or b"{}")
             score = int(req.get("score", 0))
-        except Exception as e:
-            self._send({"comment": None, "debug": "score_cast_error",
-                        "error_type": type(e).__name__,
-                        "content_length": n, "body_bytes": body_bytes})
-            return
-
-        # E. grade/directions/topic 추출
-        try:
-            grade = str(req.get("grade", ""))
+            grade_min = int(req.get("grade", 0))
             directions = [str(x) for x in req.get("directions", [])][:10]
-            topic = str(req.get("topic", ""))[:50]
+            topic_id = str(req.get("topic", ""))[:50]
         except Exception as e:
-            self._send({"comment": None, "debug": "field_extract_error",
-                        "error_type": type(e).__name__,
-                        "content_length": n, "body_bytes": body_bytes})
+            print(f"[comment] do_POST 요청 파싱 실패: {type(e).__name__}")
+            self._send({"comment": None})
             return
 
-        # 2) Gemini 호출 단계 — _ask() 가 이미 원인을 code 로 분류해 돌려준다
         try:
-            comment, nickname, code = _ask(score, grade, directions, topic)
+            comment, nickname, code = _ask(score, grade_min, directions, topic_id)
         except Exception as e:
-            print(f"[comment] do_POST _ask 호출 실패: {type(e).__name__}: {e}")
-            self._send({"comment": None, "debug": "unknown_error"})
+            print(f"[comment] do_POST _ask 호출 실패: {type(e).__name__}")
+            self._send({"comment": None})
             return
 
         if code == "ok":
             self._send({"comment": comment, "nickname": nickname})
         else:
-            # 임시 진단용 — 원인 확인 후 이 debug 필드는 제거한다
-            self._send({"comment": None, "debug": code})
+            self._send({"comment": None})
 
     def do_GET(self):
         self._send({"ok": True, "key": bool(os.environ.get("GEMINI_API_KEY"))})
