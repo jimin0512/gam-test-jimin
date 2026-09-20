@@ -470,49 +470,115 @@ for cid in ("seoul", "tokyo", "london", "singapore"):
                                        _d["temperature_2m_min"],
                                        _d["precipitation_sum"])]
 CN = {"seoul": "서울", "tokyo": "도쿄", "london": "런던", "singapore": "싱가포르"}
-YRS = 30
-c_rain = {k: sum(x["r"] for x in v) / YRS for k, v in CITY.items()}
-c_days = {k: sum(1 for x in v if x["r"] >= 1) / YRS for k, v in CITY.items()}
-c_temp = {k: mean((x["hi"] + x["lo"]) / 2 for x in v) for k, v in CITY.items()}
-c_hot = {k: max(x["hi"] for x in v) for k, v in CITY.items()}
-c_jan = {k: mean(x["lo"] for x in v if x["d"].month == 1) for k, v in CITY.items()}
-dry = min(c_rain, key=c_rain.get)
-hottest = max(c_hot, key=c_hot.get)
-colder = "서울" if c_jan["seoul"] < c_jan["tokyo"] else "도쿄"
+MONTH_NAME = {m: f"{m}월" for m in range(1, 13)}
+N_DAYS = {k: len(v) for k, v in CITY.items()}
+
+# 문항1 — 도시별 평균 일교차 (하루 최고-최저기온 차, 전체 기간 평균)
+c_range = {k: mean(x["hi"] - x["lo"] for x in v) for k, v in CITY.items()}
+biggest_range = max(c_range, key=c_range.get)
+
+# 문항2 — 강수일(1mm 이상) 1일당 평균 강수량
+c_rain_days = {k: [x for x in v if x["r"] >= 1] for k, v in CITY.items()}
+c_rain_days_n = {k: len(v) for k, v in c_rain_days.items()}
+c_per_rainday = {k: sum(x["r"] for x in v) / len(v) for k, v in c_rain_days.items()}
+london_pct_of_seoul = c_per_rainday["london"] / c_per_rainday["seoul"] * 100
+
+
+def month_mean_temp(rows):
+    """일평균기온 (hi+lo)/2 을 월별로 묶어 평균한다."""
+    buckets = {m: [] for m in range(1, 13)}
+    for x in rows:
+        buckets[x["d"].month].append((x["hi"] + x["lo"]) / 2)
+    return {m: mean(vs) for m, vs in buckets.items()}, {m: len(vs) for m, vs in buckets.items()}
+
+
+c_month_temp, c_month_temp_n = {}, {}
+for k, v in CITY.items():
+    c_month_temp[k], c_month_temp_n[k] = month_mean_temp(v)
+
+# 문항3·4 공용 — 도시별 최고월/최저월과 그 폭(계절 진폭)
+c_hottest_m = {k: max(mt, key=mt.get) for k, mt in c_month_temp.items()}
+c_coolest_m = {k: min(mt, key=mt.get) for k, mt in c_month_temp.items()}
+c_amp = {k: c_month_temp[k][c_hottest_m[k]] - c_month_temp[k][c_coolest_m[k]]
+         for k in CITY}
+biggest_amp = max(c_amp, key=c_amp.get)
+
+
+def month_avg_precip(rows):
+    """연도·월별 강수량 합계를 구한 뒤, 같은 월끼리 30년 평균한다."""
+    ym = {}
+    for x in rows:
+        key = (x["d"].year, x["d"].month)
+        ym[key] = ym.get(key, 0.0) + x["r"]
+    buckets = {m: [] for m in range(1, 13)}
+    for (y, m), s in ym.items():
+        buckets[m].append(s)
+    return {m: mean(vs) for m, vs in buckets.items()}, {m: len(vs) for m, vs in buckets.items()}
+
+
+c_month_precip, c_month_precip_n = {}, {}
+for k, v in CITY.items():
+    c_month_precip[k], c_month_precip_n[k] = month_avg_precip(v)
+
+# 문항5 — 도시별 '가장 비가 많이 오는 달'과 그 도시 간 비교
+c_wet_m = {k: max(mp, key=mp.get) for k, mp in c_month_precip.items()}
+c_wet_v = {k: c_month_precip[k][c_wet_m[k]] for k in CITY}
+wettest_city = max(c_wet_v, key=c_wet_v.get)
 
 topic(
     "cities", "🏙️", "서울·도쿄·런던·싱가포르",
-    "네 도시의 30년 평년값 (1991~2020)",
+    "30년 기온·강수 데이터를 감으로 맞혀보세요",
     "Open-Meteo Archive (ERA5 재분석)", "https://open-meteo.com/",
     [
-        choice("c1", "1년 강수량이 가장 적은 도시는?",
-               ["서울", "도쿄", "런던", "싱가포르"], CN[dry],
-               " · ".join(f"{CN[k]} {c_rain[k]:,.0f}mm" for k in CITY),
-               "비가 자주 오는 것과 많이 오는 것은 다릅니다. 런던은 자주 오지만 "
-               "적게 옵니다."),
-        slider("c2", "런던에서 1년에 비가 오는 날(1mm 이상)은 며칠일까요?",
-               c_days["london"], "일", 40, 220, 5,
-               f"런던 {c_days['london']:.0f}일 · 서울 {c_days['seoul']:.0f}일 "
-               f"(강수량은 런던 {c_rain['london']:,.0f}mm · "
-               f"서울 {c_rain['seoul']:,.0f}mm)",
-               "런던은 서울보다 비 오는 날이 많은데 총량은 절반입니다. "
-               "'며칠 왔나'와 '얼마나 왔나'는 다른 질문입니다."),
-        choice("c3", "30년간 가장 높은 기온을 기록한 도시는?",
-               ["서울", "도쿄", "런던", "싱가포르"], CN[hottest],
-               " · ".join(f"{CN[k]} {c_hot[k]:.1f}도" for k in CITY),
-               "적도에 가까울수록 덥다고 생각하지만, 최고기온 기록은 중위도 "
-               "도시에서 나옵니다."),
-        slider("c4", "서울의 연평균 기온은?",
-               c_temp["seoul"], "도", 5, 30, 0.5,
-               " · ".join(f"{CN[k]} {c_temp[k]:.1f}도" for k in CITY),
-               "여름과 겨울의 기억이 강해서 연평균은 감이 잘 안 옵니다."),
-        choice("c5", "1월 밤이 더 추운 도시는?",
-               ["서울", "도쿄"], colder,
-               f"1월 평균 최저기온 서울 {c_jan['seoul']:.1f}도 · "
-               f"도쿄 {c_jan['tokyo']:.1f}도",
-               "위도가 비슷해도 대륙의 영향을 받는 도시가 훨씬 춥습니다."),
+        choice("c1", "서울·도쿄·런던·싱가포르 중 하루 기온 차이가 평균적으로 가장 큰 도시는?",
+               ["서울", "도쿄", "런던", "싱가포르"], CN[biggest_range],
+               f"1991~2020년 각 도시 {N_DAYS['seoul']:,}일의 일 최고·최저기온 차이를 "
+               f"계산해 평균. 서울 {c_range['seoul']:.1f}도, 도쿄 {c_range['tokyo']:.1f}도, "
+               f"런던 {c_range['london']:.1f}도, 싱가포르 {c_range['singapore']:.1f}도.",
+               "런던처럼 사계절 이미지가 강한 도시를 먼저 떠올리기 쉽지만, 하루 "
+               "기온 변화폭은 서울이 가장 큽니다."),
+        slider("c2", "비 오는 날 하루 기준으로, 런던의 강수량은 서울의 몇 % 정도일까요?",
+               london_pct_of_seoul, "%", 0, 150, 5,
+               f"1991~2020년 1mm 이상 강수일 기준. 서울 {c_rain_days_n['seoul']:,}일에서 "
+               f"하루 평균 {c_per_rainday['seoul']:.1f}mm, 런던 {c_rain_days_n['london']:,}일에서 "
+               f"{c_per_rainday['london']:.1f}mm → 런던은 서울의 약 {london_pct_of_seoul:.1f}%.",
+               "런던은 비가 자주 온다는 인상이 강하지만, 한 번 올 때 내리는 양은 "
+               "서울보다 훨씬 적습니다."),
+        slider("c3", "싱가포르의 가장 더운 달과 가장 선선한 달의 평균기온 차이는 몇 도 정도일까요?",
+               c_amp["singapore"], "도", 0, 15, 0.5,
+               f"1991~2020년 일 최고·최저기온 평균을 월별로 집계"
+               f"(월별 n={c_month_temp_n['singapore'][c_hottest_m['singapore']]}일 안팎). "
+               f"{MONTH_NAME[c_hottest_m['singapore']]} "
+               f"{c_month_temp['singapore'][c_hottest_m['singapore']]:.1f}도, "
+               f"{MONTH_NAME[c_coolest_m['singapore']]} "
+               f"{c_month_temp['singapore'][c_coolest_m['singapore']]:.1f}도로 "
+               f"차이는 약 {c_amp['singapore']:.2f}도.",
+               "적도 지역은 덥다는 사실보다, 1년 내내 기온 변화가 1도 남짓이라는 "
+               "점이 더 의외입니다."),
+        choice("c4", "네 도시 중 계절에 따라 평균기온이 가장 크게 변하는 도시는?",
+               ["서울", "도쿄", "런던", "싱가포르"], CN[biggest_amp],
+               f"1991~2020년 각 도시 {N_DAYS['seoul']:,}일을 월별로 묶어 평균한 뒤 "
+               f"최고월-최저월 차이를 계산. 서울 {c_amp['seoul']:.1f}도, "
+               f"도쿄 {c_amp['tokyo']:.1f}도, 런던 {c_amp['london']:.1f}도, "
+               f"싱가포르 {c_amp['singapore']:.1f}도.",
+               "런던도 사계절이 뚜렷하지만, 실제 연중 기온 변화폭은 서울이 더 "
+               "큽니다."),
+        choice("c5", "네 도시 중 '가장 비가 많이 오는 달'의 평균 강수량이 가장 큰 도시는?",
+               ["서울", "도쿄", "런던", "싱가포르"], CN[wettest_city],
+               f"1991~2020년 각 월의 월강수량을 30년 평균"
+               f"(월별 n={c_month_precip_n['seoul'][c_wet_m['seoul']]}년). "
+               f"최고월은 서울 {MONTH_NAME[c_wet_m['seoul']]} {c_wet_v['seoul']:.1f}mm, "
+               f"도쿄 {MONTH_NAME[c_wet_m['tokyo']]} {c_wet_v['tokyo']:.1f}mm, "
+               f"런던 {MONTH_NAME[c_wet_m['london']]} {c_wet_v['london']:.1f}mm, "
+               f"싱가포르 {MONTH_NAME[c_wet_m['singapore']]} {c_wet_v['singapore']:.1f}mm.",
+               f"한국의 장마를 먼저 떠올리기 쉽지만, 네 도시 중 월평균 강수량이 "
+               f"가장 강한 달은 싱가포르의 {MONTH_NAME[c_wet_m['singapore']]}입니다."),
     ],
-    caveat="ERA5 재분석 값이고, 도시별로 관측소 위치와 기준이 다릅니다.")
+    caveat="Open-Meteo의 ERA5 재분석 자료로, 실제 도시 관측소의 공식 관측값과 다를 "
+           "수 있습니다. 요청한 위·경도와 가장 가까운 격자값을 사용하므로 도시 전체를 "
+           "대표한다고 볼 수 없으며, 여기서 '비 오는 날'은 하루 강수량 1mm 이상으로 "
+           "정의한 이 앱의 기준입니다. 네 도시는 기후대도 서로 달라 단순 순위를 도시의 "
+           "기후 우열로 해석하면 안 됩니다.")
 
 # ── 9. 지진 ──────────────────────────────────────────────────────
 Q = [f["properties"] for f in load_json("quakes.geojson")["features"]]

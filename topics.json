@@ -105,7 +105,7 @@
       "id": "cities",
       "emoji": "🏙️",
       "title": "서울·도쿄·런던·싱가포르",
-      "blurb": "네 도시의 30년 평년값 (1991~2020)",
+      "blurb": "30년 기온·강수 데이터를 감으로 맞혀보세요",
       "source": "Open-Meteo Archive (ERA5 재분석)"
     },
     {
