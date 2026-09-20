@@ -51,9 +51,18 @@ PROMPT = """너는 직장 데이터 퀴즈 앱의 촌평 담당이다.
 
 
 def _ask(score, grade, directions, topic=""):
+    """(comment, nickname, code) 를 돌려준다.
+
+    code 는 "ok" 아니면 아래 중 하나 — 원인 확인용 임시 진단 코드다.
+    상태코드 숫자 말고는 아무것도 담지 않는다: 키 값도, Gemini 응답 원문도,
+    prompt 도 나가지 않는다. 원인이 확인되면 이 코드는 지운다.
+      no_key / http_<상태코드> / timeout / url_error /
+      response_parse_error / empty_response / comment_parse_error /
+      unknown_error
+    """
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
-        return None                      # 키가 없으면 조용히 건너뛴다
+        return None, None, "no_key"
 
     body = {
         "contents": [{
@@ -75,29 +84,46 @@ def _ask(score, grade, directions, topic=""):
         headers={"Content-Type": "application/json", "x-goog-api-key": key},
         method="POST")
 
-    # 실패 지점을 구분해 기록한다 — 키 값은 절대 남기지 않는다.
-    # 여기 print() 는 Vercel Function Logs 에만 남고, 응답에는 나가지 않는다.
+    # 실패 지점을 구분한다 — 키 값과 에러 본문은 print() 로만 남기고
+    # (Vercel Function Logs 전용) 응답에는 상태코드 수준의 code 만 태운다.
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            out = json.loads(r.read().decode("utf-8"))
+            raw = r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         body_snip = e.read().decode("utf-8", "ignore")[:300]
         print(f"[comment] Gemini HTTPError {e.code}: {body_snip}")
-        return None
+        return None, None, f"http_{e.code}"
+    except TimeoutError as e:
+        print(f"[comment] Gemini 타임아웃: {e}")
+        return None, None, "timeout"
+    except urllib.error.URLError as e:
+        print(f"[comment] Gemini URLError: {e}")
+        return None, None, "url_error"
     except Exception as e:
         print(f"[comment] Gemini 호출 실패: {type(e).__name__}: {e}")
-        return None
+        return None, None, "unknown_error"
+
+    try:
+        out = json.loads(raw)
+    except Exception as e:
+        print(f"[comment] Gemini 응답 JSON 파싱 실패: {type(e).__name__}: {e}")
+        return None, None, "response_parse_error"
 
     try:
         text = out["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        print(f"[comment] Gemini 응답에 candidates/text 없음: {type(e).__name__}: {e}")
+        return None, None, "empty_response"
+
+    try:
         got = json.loads(text)
     except Exception as e:
-        raw_snip = json.dumps(out, ensure_ascii=False)[:300]
-        print(f"[comment] Gemini 응답 파싱 실패: {type(e).__name__}: {e} raw={raw_snip}")
-        return None
+        print(f"[comment] comment JSON 파싱 실패: {type(e).__name__}: {e}")
+        return None, None, "comment_parse_error"
 
-    return {"comment": str(got.get("comment", ""))[:300],
-            "nickname": str(got.get("nickname", ""))[:20]}
+    comment = str(got.get("comment", ""))[:300]
+    nickname = str(got.get("nickname", ""))[:20]
+    return comment, nickname, "ok"
 
 
 class handler(BaseHTTPRequestHandler):
@@ -110,18 +136,32 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_POST(self):
+        # 1) 요청 파싱 단계 — _ask() 를 부르기도 전에 실패하면 post_parse_error
         try:
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}")
-            got = _ask(int(req.get("score", 0)),
-                       str(req.get("grade", "")),
-                       [str(x) for x in req.get("directions", [])][:10],
-                       str(req.get("topic", ""))[:50])
-            self._send(got or {"comment": None})
+            score = int(req.get("score", 0))
+            grade = str(req.get("grade", ""))
+            directions = [str(x) for x in req.get("directions", [])][:10]
+            topic = str(req.get("topic", ""))[:50]
         except Exception as e:
-            # 무엇이 실패하든 앱을 멈추지 않는다 — 사유만 로그에 남긴다
-            print(f"[comment] do_POST 실패: {type(e).__name__}: {e}")
-            self._send({"comment": None})
+            print(f"[comment] do_POST 요청 파싱 실패: {type(e).__name__}: {e}")
+            self._send({"comment": None, "debug": "post_parse_error"})
+            return
+
+        # 2) Gemini 호출 단계 — _ask() 가 이미 원인을 code 로 분류해 돌려준다
+        try:
+            comment, nickname, code = _ask(score, grade, directions, topic)
+        except Exception as e:
+            print(f"[comment] do_POST _ask 호출 실패: {type(e).__name__}: {e}")
+            self._send({"comment": None, "debug": "unknown_error"})
+            return
+
+        if code == "ok":
+            self._send({"comment": comment, "nickname": nickname})
+        else:
+            # 임시 진단용 — 원인 확인 후 이 debug 필드는 제거한다
+            self._send({"comment": None, "debug": code})
 
     def do_GET(self):
         self._send({"ok": True, "key": bool(os.environ.get("GEMINI_API_KEY"))})
