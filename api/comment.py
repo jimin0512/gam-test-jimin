@@ -136,17 +136,54 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_POST(self):
-        # 1) 요청 파싱 단계 — _ask() 를 부르기도 전에 실패하면 post_parse_error
+        # 1) 요청 파싱 단계 — post_parse_error 를 A~E 로 한 단계 더 쪼갠다.
+        # body 내용/str(e)/키/헤더 전체는 절대 응답에 담지 않는다.
+
+        # A. Content-Length 읽기/정수 변환
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            req = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as e:
+            self._send({"comment": None, "debug": "content_length_error",
+                        "error_type": type(e).__name__})
+            return
+
+        # B. body 읽기
+        try:
+            raw_body = self.rfile.read(n)
+        except Exception as e:
+            self._send({"comment": None, "debug": "body_read_error",
+                        "error_type": type(e).__name__,
+                        "content_length": n})
+            return
+        body_bytes = len(raw_body)
+
+        # C. JSON 파싱
+        try:
+            req = json.loads(raw_body or b"{}")
+        except Exception as e:
+            self._send({"comment": None, "debug": "json_decode_error",
+                        "error_type": type(e).__name__,
+                        "content_length": n, "body_bytes": body_bytes})
+            return
+
+        # D. score 캐스팅
+        try:
             score = int(req.get("score", 0))
+        except Exception as e:
+            self._send({"comment": None, "debug": "score_cast_error",
+                        "error_type": type(e).__name__,
+                        "content_length": n, "body_bytes": body_bytes})
+            return
+
+        # E. grade/directions/topic 추출
+        try:
             grade = str(req.get("grade", ""))
             directions = [str(x) for x in req.get("directions", [])][:10]
             topic = str(req.get("topic", ""))[:50]
         except Exception as e:
-            print(f"[comment] do_POST 요청 파싱 실패: {type(e).__name__}: {e}")
-            self._send({"comment": None, "debug": "post_parse_error"})
+            self._send({"comment": None, "debug": "field_extract_error",
+                        "error_type": type(e).__name__,
+                        "content_length": n, "body_bytes": body_bytes})
             return
 
         # 2) Gemini 호출 단계 — _ask() 가 이미 원인을 code 로 분류해 돌려준다
