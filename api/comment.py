@@ -31,7 +31,7 @@ TIMEOUT = 6
 
 PROMPT = """너는 직장 데이터 퀴즈 앱의 촌평 담당이다.
 
-사용자가 방금 '입사 첫날 테스트'를 풀었다. 결과는 이렇다.
+사용자가 방금 '{topic}' 주제의 감 테스트를 풀었다. 결과는 이렇다.
 
   점수: {score}점 ({grade})
   문항별로 어느 방향으로 빗나갔는지: {directions}
@@ -50,7 +50,7 @@ PROMPT = """너는 직장 데이터 퀴즈 앱의 촌평 담당이다.
 {{"comment": "두 문장", "nickname": "별명"}}"""
 
 
-def _ask(score, grade, directions):
+def _ask(score, grade, directions, topic=""):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         return None                      # 키가 없으면 조용히 건너뛴다
@@ -58,7 +58,8 @@ def _ask(score, grade, directions):
     body = {
         "contents": [{
             "parts": [{
-                "text": PROMPT.format(score=score, grade=grade,
+                "text": PROMPT.format(topic=topic or "이번", score=score,
+                                      grade=grade,
                                       directions=", ".join(directions))
             }]
         }],
@@ -73,10 +74,28 @@ def _ask(score, grade, directions):
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json", "x-goog-api-key": key},
         method="POST")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        out = json.loads(r.read().decode("utf-8"))
-    text = out["candidates"][0]["content"]["parts"][0]["text"]
-    got = json.loads(text)
+
+    # 실패 지점을 구분해 기록한다 — 키 값은 절대 남기지 않는다.
+    # 여기 print() 는 Vercel Function Logs 에만 남고, 응답에는 나가지 않는다.
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            out = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body_snip = e.read().decode("utf-8", "ignore")[:300]
+        print(f"[comment] Gemini HTTPError {e.code}: {body_snip}")
+        return None
+    except Exception as e:
+        print(f"[comment] Gemini 호출 실패: {type(e).__name__}: {e}")
+        return None
+
+    try:
+        text = out["candidates"][0]["content"]["parts"][0]["text"]
+        got = json.loads(text)
+    except Exception as e:
+        raw_snip = json.dumps(out, ensure_ascii=False)[:300]
+        print(f"[comment] Gemini 응답 파싱 실패: {type(e).__name__}: {e} raw={raw_snip}")
+        return None
+
     return {"comment": str(got.get("comment", ""))[:300],
             "nickname": str(got.get("nickname", ""))[:20]}
 
@@ -96,10 +115,12 @@ class handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
             got = _ask(int(req.get("score", 0)),
                        str(req.get("grade", "")),
-                       [str(x) for x in req.get("directions", [])][:10])
+                       [str(x) for x in req.get("directions", [])][:10],
+                       str(req.get("topic", ""))[:50])
             self._send(got or {"comment": None})
-        except Exception:
-            # 무엇이 실패하든 앱을 멈추지 않는다
+        except Exception as e:
+            # 무엇이 실패하든 앱을 멈추지 않는다 — 사유만 로그에 남긴다
+            print(f"[comment] do_POST 실패: {type(e).__name__}: {e}")
             self._send({"comment": None})
 
     def do_GET(self):
