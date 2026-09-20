@@ -222,6 +222,12 @@ details[open] summary::after { content: " ▴"; }
   position: absolute; top: 12px; right: 12px; font-size: 11px;
   font-weight: 700; color: var(--ok);
 }
+.tbadge {
+  align-self: flex-start; display: inline-block; font-size: 10px;
+  font-weight: 700; letter-spacing: .2px; color: var(--brand);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px;
+  margin-top: 2px;
+}
 
 .linkish {
   width: auto; background: none; color: var(--muted); border: 0;
@@ -235,6 +241,8 @@ details[open] summary::after { content: " ▴"; }
   line-height: 1.65; margin: 4px 0 10px;
 }
 .caveat b { color: var(--warn); }
+.caveat.custom-note { border-style: solid; border-color: var(--ok); }
+.caveat.custom-note b { color: var(--ok); }
 #source a { color: var(--muted); }
 
 @media (min-width: 420px) { .grid { gap: 12px; } }

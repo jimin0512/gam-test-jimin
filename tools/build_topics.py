@@ -55,14 +55,19 @@ def owid_countries(rows, year, col):
             and not r["code"].startswith("OWID")}
 
 
-def topic(tid, emoji, title, blurb, source, source_url, questions, caveat=""):
+def topic(tid, emoji, title, blurb, source, source_url, questions, caveat="",
+          badge="", custom_note=""):
     """caveat = 이 데이터를 믿을 때의 한계. 앱 화면에도 그대로 나간다.
 
     출처가 다르면 같은 '서울 기온'도 값이 다르다. 그 사실을 감추지 않는다.
+
+    badge/custom_note 는 선택 항목이다. 비워 두면(기본값) 다른 주제처럼
+    아무 자리도 차지하지 않는다 — 한 주제만 특별히 표시하고 싶을 때 쓴다.
     """
     TOPICS.append({"id": tid, "emoji": emoji, "title": title, "blurb": blurb,
                    "source": source, "source_url": source_url,
-                   "caveat": caveat, "questions": questions})
+                   "caveat": caveat, "questions": questions,
+                   "badge": badge, "custom_note": custom_note})
 
 
 def slider(qid, text, answer, unit, lo, hi, step, basis, why):
@@ -578,7 +583,15 @@ topic(
            "수 있습니다. 요청한 위·경도와 가장 가까운 격자값을 사용하므로 도시 전체를 "
            "대표한다고 볼 수 없으며, 여기서 '비 오는 날'은 하루 강수량 1mm 이상으로 "
            "정의한 이 앱의 기준입니다. 네 도시는 기후대도 서로 달라 단순 순위를 도시의 "
-           "기후 우열로 해석하면 안 됩니다.")
+           "기후 우열로 해석하면 안 됩니다.",
+    badge="직접 만든 문항",
+    custom_note=(
+        f"Open-Meteo 원본에서 네 도시의 1991~2020년 일별 데이터 "
+        f"{N_DAYS['seoul']:,}일씩을 직접 확인했습니다. 결측과 날짜 중복은 "
+        f"없었고, ERA5 격자 좌표가 실제 도시 좌표와 다를 수 있다는 점도 "
+        f"확인했습니다. 강수일은 하루 1mm 이상으로 정의했으며, 평균 일교차 "
+        f"문항은 별도 계산 방식으로 한 번 더 검증했습니다."
+    ))
 
 # ── 9. 지진 ──────────────────────────────────────────────────────
 Q = [f["properties"] for f in load_json("quakes.geojson")["features"]]
@@ -694,10 +707,14 @@ def main() -> None:
         pack = {k: t[k] for k in ("id", "emoji", "title", "blurb",
                                   "source", "source_url", "caveat")}
         pack["questions"] = t["questions"]
+        if t.get("custom_note"):
+            pack["custom_note"] = t["custom_note"]
         io.open(OUT / f"{t['id']}.json", "w", encoding="utf-8").write(
             json.dumps(pack, ensure_ascii=False, indent=2))
-        index.append({k: t[k] for k in ("id", "emoji", "title", "blurb",
-                                        "source")})
+        entry = {k: t[k] for k in ("id", "emoji", "title", "blurb", "source")}
+        if t.get("badge"):
+            entry["badge"] = t["badge"]
+        index.append(entry)
 
     io.open(APP / "topics.json", "w", encoding="utf-8").write(json.dumps({
         "title": "감 테스트",

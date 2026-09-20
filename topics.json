@@ -106,7 +106,8 @@
       "emoji": "🏙️",
       "title": "서울·도쿄·런던·싱가포르",
       "blurb": "30년 기온·강수 데이터를 감으로 맞혀보세요",
-      "source": "Open-Meteo Archive (ERA5 재분석)"
+      "source": "Open-Meteo Archive (ERA5 재분석)",
+      "badge": "직접 만든 문항"
     },
     {
       "id": "quakes",

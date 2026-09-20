@@ -110,6 +110,7 @@ function renderGrid() {
       `<span class="temoji">${t.emoji}</span>` +
       `<span class="ttitle">${t.title}</span>` +
       `<span class="tblurb">${t.blurb}</span>` +
+      (t.badge ? `<span class="tbadge">${t.badge}</span>` : "") +
       (t.id in done ? `<span class="tscore">${done[t.id]}점</span>` : "");
     b.onclick = () => start(t.id);
     $("topic-grid").appendChild(b);
@@ -183,6 +184,19 @@ function pos(q, v) {
   return Math.max(0, Math.min(100, ((v - q.min) / (q.max - q.min)) * 100));
 }
 
+/* 이 주제를 이렇게 만들었습니다 — custom_note 가 있는 주제에서만 쓰인다.
+   HTML에 자리를 미리 만들어 두지 않고, 필요할 때 caveat 바로 위에 넣는다. */
+function customNoteEl() {
+  let el = $("custom-note");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "custom-note";
+    el.className = "caveat custom-note";
+    $("caveat").insertAdjacentElement("beforebegin", el);
+  }
+  return el;
+}
+
 function renderResult() {
   const total = Math.round(
     PACK.questions.map((q, i) => scoreOne(q, answers[i]))
@@ -211,6 +225,11 @@ function renderResult() {
       <details><summary>근거 보기</summary><p class="basis">${q.basis}</p></details>`;
     box.appendChild(el);
   });
+
+  const note = customNoteEl();
+  note.hidden = !PACK.custom_note;
+  if (PACK.custom_note)
+    note.innerHTML = `<b>이 주제를 이렇게 만들었습니다</b><br>${PACK.custom_note}`;
 
   $("caveat").hidden = !PACK.caveat;
   if (PACK.caveat) $("caveat").innerHTML = `<b>이 데이터의 한계</b><br>${PACK.caveat}`;
