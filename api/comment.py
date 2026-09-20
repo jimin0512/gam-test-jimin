@@ -37,7 +37,7 @@ from http.server import BaseHTTPRequestHandler
 MODEL = "gemini-3.5-flash-lite"
 ENDPOINT = ("https://generativelanguage.googleapis.com/v1beta/"
             "models/{model}:generateContent")
-TIMEOUT = 6
+TIMEOUT = 8
 
 # topics.json 에 이미 공개된 제목/등급 이름 — 정답/원본 데이터 아님.
 TOPIC_NAMES = {

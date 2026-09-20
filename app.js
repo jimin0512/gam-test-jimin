@@ -293,7 +293,7 @@ async function askComment(total, grade) {
   const asciiDirections = directions.map((d) => DIRECTION_EN[d] || d);
   try {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 3000);
+    const timer = setTimeout(() => ctl.abort(), 9000);
     const r = await fetch("/api/comment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
