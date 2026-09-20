@@ -176,4 +176,35 @@ class handler(BaseHTTPRequestHandler):
             self._send({"comment": None})
 
     def do_GET(self):
-        self._send({"ok": True, "key": bool(os.environ.get("GEMINI_API_KEY"))})
+        # ?probe=models / ?probe=test&model=... 는 실제 사용 가능한 모델을
+        # 확인하기 위한 임시 조회용이다. 원인 확인 후 지운다.
+        # 키 값은 절대 응답에 담지 않는다 — 모델 이름/성공 여부만 돌려준다.
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        probe = (qs.get("probe") or [""])[0]
+        key = os.environ.get("GEMINI_API_KEY")
+
+        if probe == "models":
+            if not key:
+                self._send({"ok": False, "probe_error": "no_key"})
+                return
+            try:
+                req = urllib.request.Request(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    headers={"x-goog-api-key": key})
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                models = [
+                    {"name": m.get("name"),
+                     "methods": m.get("supportedGenerationMethods", [])}
+                    for m in data.get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                self._send({"ok": True, "models": models})
+            except urllib.error.HTTPError as e:
+                self._send({"ok": False, "probe_error": f"http_{e.code}"})
+            except Exception as e:
+                self._send({"ok": False, "probe_error": type(e).__name__})
+            return
+
+        self._send({"ok": True, "key": bool(key)})
