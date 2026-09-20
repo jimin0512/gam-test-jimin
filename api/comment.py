@@ -37,6 +37,11 @@ ENDPOINT = ("https://generativelanguage.googleapis.com/v1beta/"
             "models/{model}:generateContent")
 TIMEOUT = 6
 
+# ?probe=test 로 실제 generateContent 성공 여부를 확인할 후보 —
+# models.list 로 이 키에서 존재/generateContent 지원을 이미 확인한 것만 둔다.
+# 임시 진단용, 원인 확인 후 지운다.
+PROBE_CANDIDATES = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+
 # topics.json 에 이미 공개된 제목/등급 이름 — 정답/원본 데이터 아님.
 TOPIC_NAMES = {
     "seoul-heat": "서울은 얼마나 더워졌나",
@@ -205,6 +210,36 @@ class handler(BaseHTTPRequestHandler):
                 self._send({"ok": False, "probe_error": f"http_{e.code}"})
             except Exception as e:
                 self._send({"ok": False, "probe_error": type(e).__name__})
+            return
+
+        if probe == "test":
+            if not key:
+                self._send({"ok": False, "probe_error": "no_key"})
+                return
+            # 쿼리로 임의 모델명을 받지 않는다 — models.list 로 실제 존재를
+            # 확인한 후보만 코드에 고정해 시험한다.
+            results = []
+            for model in PROBE_CANDIDATES:
+                try:
+                    body = {"contents": [{"parts": [{"text": "Reply only with OK"}]}]}
+                    req = urllib.request.Request(
+                        ENDPOINT.format(model=model),
+                        data=json.dumps(body).encode("utf-8"),
+                        headers={"Content-Type": "application/json",
+                                 "x-goog-api-key": key},
+                        method="POST")
+                    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                        out = json.loads(r.read().decode("utf-8"))
+                    text = out["candidates"][0]["content"]["parts"][0]["text"]
+                    results.append({"model": model, "ok": True,
+                                    "sample": text[:50]})
+                except urllib.error.HTTPError as e:
+                    results.append({"model": model, "ok": False,
+                                    "probe_error": f"http_{e.code}"})
+                except Exception as e:
+                    results.append({"model": model, "ok": False,
+                                    "probe_error": type(e).__name__})
+            self._send({"ok": True, "results": results})
             return
 
         self._send({"ok": True, "key": bool(key)})
